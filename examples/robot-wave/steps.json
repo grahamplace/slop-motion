@@ -1,0 +1,8 @@
+[
+  {"pose": "lift-30", "arm_angle_degrees": 30},
+  {"pose": "lift-60", "arm_angle_degrees": 60},
+  {"pose": "lift-90", "arm_angle_degrees": 90},
+  {"pose": "wave-120", "arm_angle_degrees": 120},
+  {"pose": "wave-100", "arm_angle_degrees": 100},
+  {"pose": "wave-120-return", "arm_angle_degrees": 120}
+]

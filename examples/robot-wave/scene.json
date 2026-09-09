@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "brief_file": "brief.txt",
+  "settings": {
+    "model": "gpt-image-2.5-sunburst",
+    "driver_model": "gpt-5.5",
+    "backend": "responses",
+    "size": "1024x1024",
+    "quality": "medium",
+    "fps": 24,
+    "max_image_requests": 7
+  },
+  "opening": {
+    "prompt_file": "opening.txt",
+    "hold": 6
+  },
+  "edits": [
+    {
+      "prompt_file": "edits/01.txt",
+      "hold": 6
+    },
+    {
+      "prompt_file": "edits/02.txt",
+      "hold": 6
+    },
+    {
+      "prompt_file": "edits/03.txt",
+      "hold": 6
+    },
+    {
+      "prompt_file": "edits/04.txt",
+      "hold": 6
+    },
+    {
+      "prompt_file": "edits/05.txt",
+      "hold": 6
+    },
+    {
+      "prompt_file": "edits/06.txt",
+      "hold": 6
+    }
+  ]
+}
