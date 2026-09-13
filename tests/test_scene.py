@@ -303,3 +303,44 @@ def test_missing_ffmpeg_and_wrong_output_size_stop_before_more_calls(
     with pytest.raises(HarnessError, match="dimensions"):
         compile_scene(scene, root, generator=generator)
     assert len(generator.calls) == 1
+
+
+def test_legacy_compiled_project_resumes_with_equivalent_nested_options(
+    scene,
+    tmp_path,
+    generator,
+    media,
+):
+    root = tmp_path / "build"
+    compile_scene(scene, root, through=2, generator=generator)
+    path = root / "project.json"
+    data = read_json(path)
+    data["settings"].update(data["settings"].pop("provider_options"))
+    data["settings"].pop("provider")
+    write_json(path, data, replace=True)
+    before = path.read_bytes()
+    source = read_json(scene)
+    source["settings"]["provider_options"] = {"backend": "responses", "quality": "medium"}
+    write_json(scene, source, replace=True)
+    assert compile_scene(scene, root, dry_run=True)["remaining_requests"] == 5
+    assert path.read_bytes() == before
+    assert Project(root).status()["settings"]["provider"] == "openai"
+    assert path.read_bytes() == before
+    assert compile_scene(scene, root, through=3, generator=generator)["requests_made"] == 1
+    assert len(generator.calls) == 3
+
+
+def test_changed_nested_generation_options_require_new_project(
+    scene,
+    tmp_path,
+    generator,
+    media,
+):
+    root = tmp_path / "build"
+    compile_scene(scene, root, through=1, generator=generator)
+    raw = read_json(scene)
+    raw["settings"]["provider_options"] = {"quality": "high"}
+    write_json(scene, raw, replace=True)
+    with pytest.raises(HarnessError, match="Generation settings changed"):
+        compile_scene(scene, root, generator=generator)
+    assert len(generator.calls) == 1

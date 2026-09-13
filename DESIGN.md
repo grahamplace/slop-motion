@@ -77,6 +77,9 @@ that PNG upload alone caused the improvement: instructions changed with it.
 - `project.py`: frame inventory, immutable assets, attempts, project locking,
   and per-frame operations. Compiler internals share its locked session so a
   frame and its scene-step identity commit in the same manifest write.
+- `settings.py`: resolves provider defaults, validates canvas/timing settings, and
+  normalizes legacy OpenAI aliases without rewriting historical manifests.
+- `providers/`: built-in provider configuration and provider-specific constraints.
 - `images.py`: the ImageGenerator seam and two adapters: Responses (default)
   and legacy direct Images. Dependencies can be injected for offline tests.
 - `video.py`: hold expansion, ffmpeg, and ffprobe verification.
@@ -129,8 +132,9 @@ produces a new export without image calls. Manual render always exports anew.
 
 ## Compatibility and verification
 
-Project schema remains version 1 with additive backend, hash, response, and
-compile fields. Old manifests without backend retain direct Images behavior.
+Project schema remains version 1 with additive provider, hash, response, and
+compile fields. New settings use provider/model/size plus provider_options; old
+flat OpenAI options normalize to the same effective configuration on read. Old manifests without backend retain direct Images behavior.
 New init defaults to Responses; explicit --backend images retains the old path.
 Compile only accepts the working Responses workflow and will not adopt unrelated
 manual projects or experiment outputs.

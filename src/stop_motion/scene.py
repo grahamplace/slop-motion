@@ -6,20 +6,11 @@ import json
 import shutil
 from pathlib import Path
 
-from .images import DEFAULT_DRIVER, ImageGenerator
-from .project import DEFAULT_MODEL, Project, inspect_png, positive_integer, validate_settings
+from .images import ImageGenerator
+from .project import Project, inspect_png
+from .settings import generation_settings, positive_integer, resolve_settings, validate_settings
 from .storage import HarnessError, read_json
 from .video import export_video
-
-DEFAULTS = {
-    "model": DEFAULT_MODEL,
-    "driver_model": DEFAULT_DRIVER,
-    "backend": "responses",
-    "size": "1024x1024",
-    "quality": "medium",
-    "fps": 24,
-    "max_image_requests": 20,
-}
 
 
 def _object(value, allowed: set[str], label: str):
@@ -60,10 +51,9 @@ def load_scene(path: Path) -> dict:
         else _text(_path(directory, raw["brief_file"]).read_text(encoding="utf-8"), "Brief")
     )
     supplied = raw.get("settings", {})
-    _object(supplied, set(DEFAULTS), "Settings")
-    settings = {**DEFAULTS, **supplied}
+    settings = resolve_settings(supplied)
     dimensions = validate_settings(settings)
-    if settings["backend"] != "responses":
+    if settings["provider_options"]["backend"] != "responses":
         raise HarnessError("compile requires the uploaded-opening Responses workflow.")
     opening = raw.get("opening")
     _object(opening, {"prompt", "prompt_file", "image", "hold"}, "Opening")
@@ -115,9 +105,10 @@ def _check_resume(project: Project, data: dict, scene: dict) -> int:
         or len(saved["steps"]) < len(data["frames"])
     ):
         raise HarnessError("Invalid saved compile state; inspect the project manifest.")
-    for key in DEFAULTS.keys() - {"fps", "max_image_requests"}:
-        if data["settings"].get(key) != scene["settings"][key]:
-            raise HarnessError(f"Generation setting {key} changed; use a new project directory.")
+    if generation_settings(data["settings"], legacy_manifest=True) != generation_settings(
+        scene["settings"]
+    ):
+        raise HarnessError("Generation settings changed; use a new project directory.")
     for attempt in data["attempts"]:
         if attempt["status"] != "succeeded":
             raise HarnessError(
@@ -157,7 +148,8 @@ def _check_resume(project: Project, data: dict, scene: dict) -> int:
                 or attempt.get("scene_step") != index
                 or attempt["request"].get("action") != ("edit" if index else "generate")
                 or any(
-                    attempt["request"].get(key) != scene["settings"][key]
+                    attempt["request"].get(key)
+                    != {**scene["settings"], **scene["settings"]["provider_options"]}[key]
                     for key in ("model", "driver_model", "quality", "size")
                 )
             ):

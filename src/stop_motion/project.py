@@ -9,49 +9,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
-from .images import DEFAULT_DRIVER, ImageGenerator, ImageRequestError, OpenAIImages, OpenAIResponses
+from .images import ImageGenerator, ImageRequestError, OpenAIImages, OpenAIResponses
+from .settings import positive_integer, resolve_settings, validate_settings
 from .storage import HarnessError, atomic_write, project_lock, read_json, write_json
 from .video import export_video, next_artifact
-
-DEFAULT_MODEL = "gpt-image-2.5-sunburst"
-SUPPORTED_MODELS = {DEFAULT_MODEL, "gpt-image-2.5-flare"}
-QUALITIES = {"low", "medium", "high", "xhigh", "max", "auto"}
-
-
-def positive_integer(value) -> bool:
-    return type(value) is int and value > 0
-
-
-def validate_settings(settings: dict) -> tuple[int, int]:
-    if settings.get("backend", "images") not in ("images", "responses"):
-        raise HarnessError("Backend must be responses or images.")
-    if settings.get("backend") == "responses" and (
-        not isinstance(settings.get("driver_model"), str) or not settings["driver_model"].strip()
-    ):
-        raise HarnessError("Responses requires a driver_model.")
-    if not isinstance(settings.get("model"), str) or settings["model"] not in SUPPORTED_MODELS:
-        raise HarnessError(f"Supported image models: {', '.join(sorted(SUPPORTED_MODELS))}")
-    if not isinstance(settings.get("quality"), str) or settings["quality"] not in QUALITIES:
-        raise HarnessError(f"Supported qualities: {', '.join(sorted(QUALITIES))}")
-    size = settings.get("size")
-    if not isinstance(size, str) or not re.fullmatch(r"\d{1,4}x\d{1,4}", size):
-        raise HarnessError("Size must be explicit WIDTHxHEIGHT, such as 1024x1024.")
-    width, height = map(int, size.split("x"))
-    if not (
-        min(width, height) > 0
-        and width % 16 == height % 16 == 0
-        and max(width, height) <= 3840
-        and max(width, height) <= 3 * min(width, height)
-        and 655360 <= width * height <= 8294400
-    ):
-        raise HarnessError(
-            "Size requires multiples of 16, edges <=3840, aspect ratio between 1:3 and 3:1, "
-            "and 655360–8294400 total pixels."
-        )
-    for field in ("fps", "max_image_requests"):
-        if not positive_integer(settings.get(field)):
-            raise HarnessError(f"{field} must be a positive integer.")
-    return width, height
 
 
 def inspect_png(source, expected_size: tuple[int, int] | None = None) -> tuple[int, int]:
@@ -80,17 +41,20 @@ class Project:
         root: Path | str,
         brief: str,
         *,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         size: str = "1024x1024",
-        quality: str = "medium",
+        quality: str | None = None,
         fps: int = 24,
         max_image_requests: int = 20,
-        backend: str = "responses",
-        driver_model: str = DEFAULT_DRIVER,
+        backend: str | None = None,
+        driver_model: str | None = None,
+        provider: str = "openai",
+        provider_options: dict | None = None,
     ):
         if not brief.strip():
             raise HarnessError("The scene brief cannot be empty.")
-        settings = {
+        supplied = {
+            "provider": provider,
             "model": model,
             "size": size,
             "quality": quality,
@@ -98,8 +62,11 @@ class Project:
             "max_image_requests": max_image_requests,
             "backend": backend,
             "driver_model": driver_model,
+            "provider_options": provider_options,
         }
-        validate_settings(settings)
+        settings = resolve_settings(
+            {key: value for key, value in supplied.items() if value is not None}
+        )
         project = cls(root)
         project.root.mkdir(parents=True, exist_ok=True)
         with project_lock(project.root):
@@ -212,6 +179,7 @@ class Project:
         with self._session() as data:
             return {
                 **data,
+                "settings": resolve_settings(data["settings"], legacy_manifest=True),
                 "project_path": str(self.root),
                 "frames": [{**frame, "path": str(self._asset(frame))} for frame in data["frames"]],
                 "request_count": len(data["attempts"]),
@@ -251,13 +219,14 @@ class Project:
         if not prompt.strip():
             raise HarnessError("The frame prompt cannot be empty.")
         references = references or []
-        settings = data["settings"]
+        resolved = resolve_settings(data["settings"], legacy_manifest=True)
+        settings = {**resolved, **resolved["provider_options"]}
         responses = settings.get("backend", "images") == "responses"
         if responses and references:
             raise HarnessError(
                 "Responses uses one --base and its edit chain; references are unsupported."
             )
-        dimensions = validate_settings(settings)
+        dimensions = validate_settings(resolved)
         ids = ([base_frame] if base_frame else []) + references
         if len(ids) != len(set(ids)):
             raise HarnessError("Each input frame should appear only once; the base comes first.")

@@ -15,7 +15,7 @@ from .test_responses_experiment import client_for, response_body
 
 def test_new_projects_use_responses_and_branch_from_selected_parent(tmp_path, generator):
     project = Project.create(tmp_path / "shot", "A robot waves.")
-    assert project.status()["settings"]["backend"] == "responses"
+    assert project.status()["settings"]["provider_options"]["backend"] == "responses"
     project.make_frame("Opening", generator=generator)
     project.make_frame("First edit", base_frame="f0001", generator=generator)
     Project(project.root).make_frame("Next edit", base_frame="f0002", generator=generator)
@@ -41,8 +41,9 @@ def test_legacy_manifest_without_backend_still_uses_images(tmp_path, generator, 
     project = Project.create(tmp_path / "legacy", "Scene", backend="images")
     path = project.root / "project.json"
     state = read_json(path)
-    state["settings"].pop("backend")
-    state["settings"].pop("driver_model")
+    options = state["settings"].pop("provider_options")
+    state["settings"].pop("provider")
+    state["settings"]["quality"] = options["quality"]
     write_json(path, state, replace=True)
     monkeypatch.setattr("stop_motion.project.OpenAIImages", lambda: generator)
     project.make_frame("Opening")
