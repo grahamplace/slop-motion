@@ -6,8 +6,9 @@ import json
 import shutil
 from pathlib import Path
 
-from .images import ImageGenerator
+from .images import ImageGenerator, prepare_request, validate_saved
 from .project import Project, inspect_png
+from .providers import get_provider
 from .settings import generation_settings, positive_integer, resolve_settings, validate_settings
 from .storage import HarnessError, read_json
 from .video import export_video
@@ -53,8 +54,8 @@ def load_scene(path: Path) -> dict:
     supplied = raw.get("settings", {})
     settings = resolve_settings(supplied)
     dimensions = validate_settings(settings)
-    if settings["provider_options"]["backend"] != "responses":
-        raise HarnessError("compile requires the uploaded-opening Responses workflow.")
+    if not get_provider(settings["provider"]).supports_compile(settings):
+        raise HarnessError("The selected image workflow does not support compile.")
     opening = raw.get("opening")
     _object(opening, {"prompt", "prompt_file", "image", "hold"}, "Opening")
     png = None
@@ -109,6 +110,9 @@ def _check_resume(project: Project, data: dict, scene: dict) -> int:
         scene["settings"]
     ):
         raise HarnessError("Generation settings changed; use a new project directory.")
+    workflow = get_provider(scene["settings"]["provider"]).workflow(scene["settings"])
+    if saved is not None and saved.get("workflow", workflow) != workflow:
+        raise HarnessError("Generation workflow changed; use a new project directory.")
     for attempt in data["attempts"]:
         if attempt["status"] != "succeeded":
             raise HarnessError(
@@ -131,29 +135,32 @@ def _check_resume(project: Project, data: dict, scene: dict) -> int:
             raise HarnessError(f"Saved frame {frame['id']} changed; cannot resume its edit chain.")
         if index or "prompt" in scene["steps"][0]:
             attempt = next((a for a in data["attempts"] if a["id"] == frame["attempt_id"]), None)
-            if not attempt or not attempt.get("response_id"):
-                raise HarnessError("Missing response metadata; cannot resume this build.")
-            parent = data["frames"][index - 1]["id"] if index else None
-            previous = None
-            if index > 1:
-                previous = next(
-                    a["response_id"]
+            if not attempt:
+                raise HarnessError("Missing generation attempt; cannot resume this build.")
+            parent_frame = data["frames"][index - 1] if index else None
+            parent_id = parent_frame["id"] if parent_frame else None
+            parent_attempt = next(
+                (
+                    a
                     for a in data["attempts"]
-                    if a["id"] == data["frames"][index - 1]["attempt_id"]
-                )
+                    if parent_frame and a["id"] == parent_frame.get("attempt_id")
+                ),
+                None,
+            )
             if (
-                attempt["base_frame_id"] != parent
-                or attempt["request"].get("previous_response_id") != previous
+                attempt["base_frame_id"] != parent_id
+                or attempt.get("reference_frame_ids", [])
                 or attempt["prompt"] != scene["steps"][index]["prompt"]
                 or attempt.get("scene_step") != index
-                or attempt["request"].get("action") != ("edit" if index else "generate")
-                or any(
-                    attempt["request"].get(key)
-                    != {**scene["settings"], **scene["settings"]["provider_options"]}[key]
-                    for key in ("model", "driver_model", "quality", "size")
-                )
             ):
-                raise HarnessError("Saved response chain is inconsistent.")
+                raise HarnessError("Saved pose lineage is inconsistent.")
+            request = prepare_request(
+                scene["settings"],
+                attempt["prompt"],
+                base=project._asset(parent_frame) if parent_frame else None,
+                parent=parent_attempt,
+            )
+            validate_saved(attempt, request)
     committed = {project._asset(frame) for frame in data["frames"]}
     if any(p.resolve() not in committed for p in (project.root / "frames").glob("*.png")):
         raise HarnessError("Uncommitted image preserved; inspect it before starting a new build.")
@@ -179,7 +186,9 @@ def _plan(scene: dict, root: Path, completed: int, through: int | None) -> dict:
         "completed_poses": completed,
         "remaining_requests": requests,
         "duration_seconds": sum(scene["holds"][:target]) / scene["settings"]["fps"],
-        "workflow": "separate-opening -> uploaded-PNG-first-edit -> previous_response_id",
+        "workflow": get_provider(scene["settings"]["provider"]).describe_workflow(
+            scene["settings"]
+        ),
     }
 
 
@@ -221,7 +230,11 @@ def compile_scene(
         data["settings"] = scene["settings"]
         data["brief"] = scene["brief"]
         state = data.setdefault("compile", {})
-        state.update(steps=scene["steps"], scene_path=scene["scene_path"])
+        state.update(
+            steps=scene["steps"],
+            scene_path=scene["scene_path"],
+            workflow=get_provider(scene["settings"]["provider"]).workflow(scene["settings"]),
+        )
         project._save(data)
         for index in range(completed, plan["target_poses"]):
             if progress:

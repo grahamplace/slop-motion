@@ -9,7 +9,13 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
-from .images import ImageGenerator, ImageRequestError, OpenAIImages, OpenAIResponses
+from .images import (
+    ImageGenerator,
+    ImageRequestError,
+    create_generator,
+    prepare_request,
+    validate_saved,
+)
 from .settings import positive_integer, resolve_settings, validate_settings
 from .storage import HarnessError, atomic_write, project_lock, read_json, write_json
 from .video import export_video, next_artifact
@@ -219,14 +225,8 @@ class Project:
         if not prompt.strip():
             raise HarnessError("The frame prompt cannot be empty.")
         references = references or []
-        resolved = resolve_settings(data["settings"], legacy_manifest=True)
-        settings = {**resolved, **resolved["provider_options"]}
-        responses = settings.get("backend", "images") == "responses"
-        if responses and references:
-            raise HarnessError(
-                "Responses uses one --base and its edit chain; references are unsupported."
-            )
-        dimensions = validate_settings(resolved)
+        settings = resolve_settings(data["settings"], legacy_manifest=True)
+        dimensions = validate_settings(settings)
         ids = ([base_frame] if base_frame else []) + references
         if len(ids) != len(set(ids)):
             raise HarnessError("Each input frame should appear only once; the base comes first.")
@@ -241,8 +241,21 @@ class Project:
                 )
         if len(data["attempts"]) >= settings["max_image_requests"]:
             raise HarnessError("Image request budget exhausted; no request was sent.")
+        parent = self._frame(data, base_frame) if base_frame else None
+        source = next(
+            (a for a in data["attempts"] if parent and a["id"] == parent.get("attempt_id")), None
+        )
+        if parent and parent.get("attempt_id") is not None and source is None:
+            raise HarnessError("The selected base has no saved generation attempt.")
+        request = prepare_request(
+            settings,
+            prompt,
+            base=paths[0] if base_frame else None,
+            references=paths[1:] if base_frame else paths,
+            parent=source,
+        )
         if generator is None:
-            generator = OpenAIResponses() if responses else OpenAIImages()
+            generator = create_generator(settings)
         number = max((int(a["id"][1:]) for a in data["attempts"]), default=0) + 1
         reserved = [a["frame_id"] for a in data["attempts"]]
         reserved += [frame["id"] for frame in data["frames"]]
@@ -255,35 +268,6 @@ class Project:
             + 1
         )
         frame_id = f"f{frame_number:04d}"
-        request = {
-            "model": settings["model"],
-            "size": settings["size"],
-            "quality": settings["quality"],
-            "background": "opaque",
-            "output_format": "png",
-            "n": 1,
-            "prompt": prompt,
-        }
-        if responses:
-            request.pop("n")
-            request.update(
-                action="edit" if base_frame else "generate",
-                driver_model=settings["driver_model"],
-                previous_response_id=None,
-            )
-            if base_frame:
-                parent = self._frame(data, base_frame)
-                source = next(
-                    (a for a in data["attempts"] if a["id"] == parent.get("attempt_id")), None
-                )
-                # A generated opening's response MUST NOT seed the edit conversation.
-                if source and source["request"].get("action") == "edit":
-                    if not source.get("response_id") or source["status"] != "succeeded":
-                        raise HarnessError("The selected edit has no usable saved response ID.")
-                    for key in ("model", "size", "quality", "driver_model"):
-                        if source["request"].get(key) != request[key]:
-                            raise HarnessError("Edit-chain settings changed; start a new project.")
-                    request["previous_response_id"] = source["response_id"]
         attempt = {
             "id": f"a{number:04d}",
             "status": "started",
@@ -291,7 +275,8 @@ class Project:
             "base_frame_id": base_frame,
             "reference_frame_ids": references,
             "prompt": prompt,
-            "request": request,
+            "provider": settings["provider"],
+            "request": request.record(),
             "usage": None,
             "provider_request_id": None,
             "error": None,
@@ -300,11 +285,12 @@ class Project:
         data["attempts"].append(attempt)
         self._save(data)
         try:
-            generated = generator.generate(request, paths)
+            generated = generator.generate(request)
             attempt["usage"] = generated.usage
             attempt["provider_request_id"] = generated.request_id
-            if generated.metadata:
-                attempt.update(generated.metadata)
+            attempt["provider_metadata"] = generated.metadata
+            attempt["continuation"] = generated.continuation
+            validate_saved(attempt, request)
             width, height = inspect_png(io.BytesIO(generated.png))
             path = self.root / "frames" / f"{frame_id}.png"
             atomic_write(path, generated.png)
@@ -314,8 +300,7 @@ class Project:
                 error=str(exc),
                 provider_request_id=exc.request_id,
             )
-            if exc.metadata:
-                attempt.update(exc.metadata)
+            attempt["provider_metadata"] = exc.metadata
             self._save(data)
             raise
         except Exception as exc:

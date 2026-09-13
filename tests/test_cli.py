@@ -15,7 +15,7 @@ def test_cli_json_contract(tmp_path, generator, monkeypatch, capsys):
     assert initial.err == ""
     prompt = tmp_path / "prompt.txt"
     prompt.write_text("Opening frame")
-    monkeypatch.setattr("stop_motion.project.OpenAIResponses", lambda: generator)
+    monkeypatch.setattr("stop_motion.providers.openai.OpenAIResponses", lambda: generator)
     assert main(["frame", "--project", str(root), "--prompt-file", str(prompt)]) == 0
     output = json.loads(capsys.readouterr().out)
     assert output["id"] == "f0001"

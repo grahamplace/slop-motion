@@ -48,7 +48,7 @@ GPT Image 2.5 Sunburst explicitly selected for image generation/editing.
    store the response, and use low reasoning/max_output_tokens 4096.
 4. Later edits send only their user prompt and the preceding edit's
    previous_response_id. The service maintains conversation history.
-5. Persist returned response IDs, request IDs, image-call metadata/revised prompts,
+5. Persist returned response IDs as continuation state, request IDs, image-call metadata/revised prompts,
    usage, and output hashes. Never persist base64 payloads or API credentials.
 
 The adapter requires exactly one completed image call and validates any returned
@@ -79,9 +79,12 @@ that PNG upload alone caused the improvement: instructions changed with it.
   frame and its scene-step identity commit in the same manifest write.
 - `settings.py`: resolves provider defaults, validates canvas/timing settings, and
   normalizes legacy OpenAI aliases without rewriting historical manifests.
-- `providers/`: built-in provider configuration and provider-specific constraints.
-- `images.py`: the ImageGenerator seam and two adapters: Responses (default)
-  and legacy direct Images. Dependencies can be injected for offline tests.
+- `providers/`: built-in provider configuration, request serialization, continuation
+  rules, result validation, and lazy SDK construction.
+- `images.py`: the typed ImageRequest/ImageGenerator seam, immutable request audit
+  records, and provider dispatch. Adapters return PNG bytes, optional usage,
+  diagnostic metadata, and optional continuation state. Stateless adapters need no
+  conversation identifier. Dependencies can be injected for offline tests.
 - `video.py`: hold expansion, ffmpeg, and ffprobe verification.
 - `storage.py`: exclusive atomic asset publication, atomic manifest replacement,
   and an operating-system project lock released on process exit.
@@ -98,7 +101,9 @@ immutable frame IDs; attempts carry scene-step indexes for compiled builds.
 A compile holds the project lock across generation and export. Before each
 request it durably records a started attempt. It publishes the PNG exclusively,
 then commits the frame, response metadata, and successful attempt together.
-An interrupted command can leave an unknown request or uncommitted PNG; neither
+Provider diagnostic fields are nested under provider_metadata and cannot replace
+attempt IDs, statuses, or pose indexes. Each request records its resolved
+generation settings and workflow version. An interrupted command can leave an unknown request or uncommitted PNG; neither
 is automatically retried or adopted. Failed and unknown attempts consume budget.
 
 Resume checks completed prompt contents, opening PNG hash, generation settings,
