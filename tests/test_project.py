@@ -108,7 +108,7 @@ def test_failed_requests_consume_budget_without_retry(tmp_path, unknown):
     class FailingImages:
         calls = 0
 
-        def generate(self, request, inputs):
+        def generate(self, request):
             self.calls += 1
             raise ImageRequestError("Provider failure", unknown=unknown, request_id="req_failed")
 
@@ -127,7 +127,7 @@ def test_failed_requests_consume_budget_without_retry(tmp_path, unknown):
 
 def test_interrupted_call_is_unknown_on_resume_and_does_not_reuse_id(project, generator):
     class InterruptedImages:
-        def generate(self, request, inputs):
+        def generate(self, request):
             raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):

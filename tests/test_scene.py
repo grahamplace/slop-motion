@@ -11,8 +11,9 @@ import pytest
 
 from scripts import compare_responses as experiment
 from stop_motion.cli import main
-from stop_motion.images import EDIT_INSTRUCTIONS, ImageRequestError, OpenAIResponses
+from stop_motion.images import ImageRequestError
 from stop_motion.project import Project
+from stop_motion.providers.openai import EDIT_INSTRUCTIONS, OpenAIResponses, image_options
 from stop_motion.scene import compile_scene, load_scene
 from stop_motion.storage import HarnessError, project_lock, read_json, write_json
 
@@ -98,11 +99,14 @@ def test_compile_matches_tested_uploaded_opening_requests_and_resumes(scene, tmp
         assert request == experiment.build_request(baseline, index, parents, output=tmp_path)
     assert EDIT_INSTRUCTIONS == experiment.INSTRUCTIONS
     state = Project(root).status()
-    assert state["attempts"][2]["response_id"] == "resp_3"
+    assert state["attempts"][2]["continuation"]["response_id"] == "resp_3"
     assert state["attempts"][2]["provider_request_id"] == "req_3"
-    assert state["attempts"][2]["image_calls"][0]["revised_prompt"] == "Rewritten 3"
+    assert (
+        state["attempts"][2]["provider_metadata"]["image_calls"][0]["revised_prompt"]
+        == "Rewritten 3"
+    )
     assert "base64" not in (root / "project.json").read_text()
-    assert "result" not in state["attempts"][2]["image_calls"][0]
+    assert "result" not in state["attempts"][2]["provider_metadata"]["image_calls"][0]
     again = compile_scene(scene, root)  # No key, requests, or duplicate export.
     assert again["requests_made"] == 0
     assert again["reused_video"] is True
@@ -121,8 +125,8 @@ def test_import_opening_retime_and_append(scene, tmp_path, generator, media):
     first = compile_scene(scene, root, generator=generator)
     assert first["requests_made"] == 1
     assert (root / "frames/f0001.png").read_bytes() == seed.read_bytes()
-    assert generator.calls[0][0]["action"] == "edit"
-    assert generator.calls[0][0]["previous_response_id"] is None
+    assert generator.calls[0][0].action == "edit"
+    assert generator.calls[0][0].continuation is None
     assert generator.calls[0][1] == [root / "frames/f0001.png"]
     raw["opening"]["hold"] = 6
     raw["settings"]["fps"] = 12
@@ -136,7 +140,7 @@ def test_import_opening_retime_and_append(scene, tmp_path, generator, media):
     write_json(scene, raw, replace=True)
     last = compile_scene(scene, root, generator=generator)
     assert last["requests_made"] == 1
-    assert generator.calls[-1][0]["previous_response_id"] == "resp_test_0"
+    assert generator.calls[-1][0].continuation == {"response_id": "resp_test_0"}
 
 
 def test_unrendered_prompts_can_change_but_completed_prompts_cannot(
@@ -163,7 +167,7 @@ def test_failed_compile_never_replays(scene, tmp_path, unknown, media):
     calls = []
 
     class Failing:
-        def generate(self, request, inputs):
+        def generate(self, request):
             calls.append(request)
             raise ImageRequestError("Test failure", unknown=unknown)
 
@@ -208,11 +212,11 @@ def test_changed_png_settings_and_chain_are_rejected(scene, tmp_path, generator,
     for mutation in ("chain", "model", "response", "steps", "attempts"):
         state = copy.deepcopy(initial)
         if mutation == "chain":
-            state["attempts"][-1]["request"]["previous_response_id"] = "resp_wrong"
+            state["attempts"][-1]["request"]["continuation"] = {"response_id": "resp_wrong"}
         elif mutation == "model":
-            state["attempts"][-1]["request"]["model"] = "gpt-image-2.5-flare"
+            state["attempts"][-1]["request"]["settings"]["model"] = "gpt-image-2.5-flare"
         elif mutation == "response":
-            state["attempts"][-1]["response_id"] = None
+            state["attempts"][-1]["continuation"] = None
         elif mutation == "steps":
             state["compile"]["steps"] = []
         else:
@@ -269,7 +273,7 @@ def test_cli_dry_run_and_progress_contract(scene, tmp_path, generator, monkeypat
     assert output.err == ""
     assert json.loads(output.out)["remaining_requests"] == 7
     assert not root.exists()
-    monkeypatch.setattr("stop_motion.project.OpenAIResponses", lambda: generator)
+    monkeypatch.setattr("stop_motion.providers.openai.OpenAIResponses", lambda: generator)
     assert main([*argv, "--through", "2"]) == 0
     output = capsys.readouterr()
     assert json.loads(output.out)["requests_made"] == 2
@@ -344,3 +348,26 @@ def test_changed_nested_generation_options_require_new_project(
     with pytest.raises(HarnessError, match="Generation settings changed"):
         compile_scene(scene, root, generator=generator)
     assert len(generator.calls) == 1
+
+
+def test_historical_request_records_resume_without_rewriting(scene, tmp_path, generator, media):
+    root = tmp_path / "build"
+    compile_scene(scene, root, through=3, generator=generator)
+    path = root / "project.json"
+    data = read_json(path)
+    data["settings"].update(data["settings"].pop("provider_options"))
+    data["settings"].pop("provider")
+    data["compile"].pop("workflow")
+    for attempt, (request, _) in zip(data["attempts"], generator.calls, strict=True):
+        attempt["request"] = image_options(request)
+        attempt.update(attempt.pop("provider_metadata"))
+        attempt.pop("continuation")
+        attempt.pop("provider")
+    write_json(path, data, replace=True)
+    before = path.read_bytes()
+    assert compile_scene(scene, root, dry_run=True)["remaining_requests"] == 4
+    assert path.read_bytes() == before
+    assert compile_scene(scene, root, through=4, generator=generator)["requests_made"] == 1
+    resumed = read_json(path)
+    assert resumed["attempts"][:3] == data["attempts"]
+    assert generator.calls[-1][0].continuation == {"response_id": "resp_test_2"}

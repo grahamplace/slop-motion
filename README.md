@@ -131,6 +131,11 @@ New project manifests and command results contain the resolved options under
 `init` accepts `--provider openai` and `--provider-options options.json` (a JSON
 object of provider options), alongside the existing OpenAI flags. Credentials
 remain environment-only; credential fields and unknown options are rejected.
+Each new attempt records its provider, generation settings, workflow version, and
+optional continuation state. Provider diagnostics live under `provider_metadata`
+so they cannot overwrite the attempt ledger. Historical top-level response fields
+remain readable and existing attempts are preserved.
+
 Reading an old project does not migrate it: missing provider means OpenAI, and
 missing backend retains legacy Images behavior. Equivalent legacy/nested scene
 settings can resume the same build. Changing effective generation options needs

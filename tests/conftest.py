@@ -22,14 +22,17 @@ class FakeImages:
         self.colors = colors
         self.size = size
 
-    def generate(self, request, inputs):
-        self.calls.append((request, list(inputs)))
+    def generate(self, request):
+        self.calls.append((request, request.input_paths))
         index = len(self.calls) - 1
         return GeneratedImage(
             png_bytes(self.colors[index % len(self.colors)], self.size, index),
             usage={"total_tokens": 100},
             request_id=f"req_test_{index}",
-            metadata={"response_id": f"resp_test_{index}"} if "action" in request else None,
+            metadata={"response_id": f"resp_test_{index}"},
+            continuation={"response_id": f"resp_test_{index}"}
+            if request.settings["provider_options"]["backend"] == "responses"
+            else None,
         )
 
 

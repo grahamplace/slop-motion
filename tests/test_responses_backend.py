@@ -5,8 +5,9 @@ import json
 import httpx
 import pytest
 
-from stop_motion.images import ImageRequestError, OpenAIResponses
+from stop_motion.images import ImageRequestError
 from stop_motion.project import Project
+from stop_motion.providers.openai import OpenAIResponses
 from stop_motion.storage import HarnessError, read_json, write_json
 
 from .conftest import png_bytes
@@ -22,14 +23,14 @@ def test_new_projects_use_responses_and_branch_from_selected_parent(tmp_path, ge
     project.make_frame("Alternative next edit", base_frame="f0002", generator=generator)
     project.make_frame("Alternative first edit", base_frame="f0001", generator=generator)
     requests = [call[0] for call in generator.calls]
-    assert [r["previous_response_id"] for r in requests] == [
+    assert [(r.continuation or {}).get("response_id") for r in requests] == [
         None,
         None,
         "resp_test_1",
         "resp_test_1",
         None,
     ]
-    assert [r["action"] for r in requests] == ["generate"] + ["edit"] * 4
+    assert [r.action for r in requests] == ["generate"] + ["edit"] * 4
     with pytest.raises(HarnessError, match="references are unsupported"):
         project.make_frame(
             "Extra ref", base_frame="f0002", references=["f0001"], generator=generator
@@ -45,11 +46,11 @@ def test_legacy_manifest_without_backend_still_uses_images(tmp_path, generator, 
     state["settings"].pop("provider")
     state["settings"]["quality"] = options["quality"]
     write_json(path, state, replace=True)
-    monkeypatch.setattr("stop_motion.project.OpenAIImages", lambda: generator)
+    monkeypatch.setattr("stop_motion.providers.openai.OpenAIImages", lambda: generator)
     project.make_frame("Opening")
     project.make_frame("Edit", base_frame="f0001")
-    assert "action" not in generator.calls[-1][0]
-    assert generator.calls[-1][0]["n"] == 1
+    assert generator.calls[-1][0].settings["provider_options"]["backend"] == "images"
+    assert generator.calls[-1][0].continuation is None
 
 
 @pytest.mark.parametrize(
@@ -90,7 +91,7 @@ def test_responses_failures_keep_metadata_without_retries(tmp_path, failure):
     assert state["frames"] == []
     assert state["request_count"] == 1
     if failure not in ("timeout", 429, 500):
-        assert attempt["response_id"] == "resp_1"
+        assert attempt["provider_metadata"]["response_id"] == "resp_1"
         assert attempt["provider_request_id"] == "req_test"
         assert "result" not in (root := (project.root / "project.json").read_text())
         assert "base64," not in root

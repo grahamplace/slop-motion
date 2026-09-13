@@ -4,7 +4,9 @@ import httpx
 import pytest
 from openai import OpenAI
 
-from stop_motion.images import ImageRequestError, OpenAIImages
+from stop_motion.images import ImageRequestError, prepare_request
+from stop_motion.providers.openai import OpenAIImages
+from stop_motion.settings import resolve_settings
 
 from .conftest import png_bytes
 
@@ -33,23 +35,17 @@ def test_generate_and_edit_use_real_sdk_with_correct_routes_and_files(tmp_path):
 
     with sdk_client(respond) as client:
         images = OpenAIImages(client)
-        options = {
-            "model": "gpt-image-2.5-sunburst",
-            "prompt": "A butterfly",
-            "size": "1024x1024",
-            "quality": "medium",
-            "output_format": "png",
-            "background": "opaque",
-            "n": 1,
-        }
-        generated = images.generate(options, [])
+        settings = resolve_settings({"backend": "images"})
+        generated = images.generate(prepare_request(settings, "A butterfly"))
         assert generated.png == png
         assert generated.request_id == "req_local"
         assert generated.usage["total_tokens"] == 100
         first, second = tmp_path / "base.png", tmp_path / "reference.png"
         first.write_bytes(png)
         second.write_bytes(png_bytes("blue"))
-        edited = images.generate(options, [first, second])
+        edited = images.generate(
+            prepare_request(settings, "A butterfly", base=first, references=[second])
+        )
         assert edited.png == png
     assert [request.url.path for request in calls] == ["/v1/images/generations", "/v1/images/edits"]
     assert b'"model":"gpt-image-2.5-sunburst"' in calls[0].content
@@ -73,7 +69,9 @@ def test_sdk_never_retries_failed_requests(status):
         )
 
     with sdk_client(respond) as client, pytest.raises(ImageRequestError) as error:
-        OpenAIImages(client).generate({"model": "gpt-image-2.5-sunburst", "prompt": "Scene"}, [])
+        OpenAIImages(client).generate(
+            prepare_request(resolve_settings({"backend": "images"}), "Scene")
+        )
     assert len(calls) == 1
     assert error.value.request_id == "req_failure"
     assert error.value.unknown == (status == 500)
@@ -87,6 +85,8 @@ def test_timeout_has_unknown_outcome_and_no_retry():
         raise httpx.ReadTimeout("Timed out", request=request)
 
     with sdk_client(timeout) as client, pytest.raises(ImageRequestError) as error:
-        OpenAIImages(client).generate({"model": "gpt-image-2.5-sunburst", "prompt": "Scene"}, [])
+        OpenAIImages(client).generate(
+            prepare_request(resolve_settings({"backend": "images"}), "Scene")
+        )
     assert error.value.unknown
     assert len(calls) == 1
