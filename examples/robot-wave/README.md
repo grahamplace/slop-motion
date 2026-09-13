@@ -12,6 +12,10 @@ conversation, then chains six edits: at most seven requests, 1.75 seconds of
 video. Add `--through 2` to inspect an opening/first-edit checkpoint before
 continuing. See the [main README](../../README.md) for authoring and resume rules.
 
+Use [scene-gemini.json](scene-gemini.json) with `GEMINI_API_KEY` to run the same
+prompts through Gemini. The [live validation notes](gemini-validation.md) record
+successful resume and rendering, along with the observed pose-following limits.
+
 ## Historical model comparison (not the recommended pipeline)
 
 The experiment below used a different initialization and produced poor robot

@@ -204,9 +204,11 @@ that owns `GEMINI_API_KEY`; a zero request limit requires an account change befo
 generation can proceed. Failed requests are recorded and never retried automatically.
 
 The integration is covered by mocked HTTP, real image decoding/video encoding,
-and fresh-process resume tests. The example is a continuity evaluation scene;
-a live seven-pose Gemini sequence has not yet been visually validated. Passing
-these tests does not establish motion quality or character consistency.
+and fresh-process resume tests. A live seven-pose robot run also completed with
+checkpoint resume and video reuse. Visual inspection found stable character
+details and framing, but inaccurate arm angles and some texture drift. See the
+[validation notes](examples/robot-wave/gemini-validation.md); this single run
+does not establish general motion quality or character consistency.
 
 ## The OpenAI continuity workflow
 

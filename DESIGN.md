@@ -115,7 +115,10 @@ remain inspectable but cannot advance compilation. Provider metadata records
 native image MIME/hash, returned model, interaction identity/status, and usage.
 
 The implementation is verified with mocked HTTP plus real image/video handling,
-including cross-process resume. Live Gemini continuity remains unverified.
+including cross-process resume. A live seven-pose robot run verified generation,
+uploaded-opening editing, saved interaction chaining across processes, and cached
+video reuse. Visual inspection found stable character details but inconsistent
+pose following; see the [validation notes](examples/robot-wave/gemini-validation.md).
 References: [image generation](https://ai.google.dev/gemini-api/docs/image-generation),
 [Interactions schema](https://ai.google.dev/static/api/interactions.openapi.json).
 
