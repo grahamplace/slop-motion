@@ -14,8 +14,8 @@ uv sync
 uv run stop-motion --help
 ```
 
-Set `OPENAI_API_KEY` in the environment. If you keep it in the ignored repo
-`.env`, use `uv run --env-file .env stop-motion …` for commands that generate
+Set `OPENAI_API_KEY` (the default provider) or `GEMINI_API_KEY` (Gemini) in the
+environment. If you keep it in the ignored repo `.env`, use `uv run --env-file .env stop-motion …` for commands that generate
 images. The CLI does not automatically search for credential files and never
 stores credentials in a scene or project. Offline commands need no API key.
 Alternatively, `pip install -e .` in a virtual environment.
@@ -28,7 +28,7 @@ to a new authoring directory, then edit `scene.json`, `opening.txt`, and
 older experiments; compile reads only files referenced in `scene.json`.
 
 Validate first; this prints the resolved settings, duration, completed poses, and
-remaining request count without creating files or contacting OpenAI:
+remaining request count without creating files or contacting an image provider:
 
 ```sh
 uv run stop-motion compile --scene examples/robot-wave/scene.json --project projects/robot-cli --dry-run
@@ -96,8 +96,9 @@ MP4 is not proof that the movement looks good.
   No template expansion is performed.
 - `hold`: positive integer output frames, default 3. Duration is
   `sum(hold) / fps`. More holds slow playback; more edits add distinct poses.
-- Settings default to Sunburst, GPT-5.5, medium quality, 1024×1024, 24 FPS, and
-  20 requests. `backend` defaults to `responses` and compile requires it.
+- With the default OpenAI provider, settings default to Sunburst, GPT-5.5, medium
+  quality, 1024×1024, 24 FPS, and 20 requests. Its `backend` defaults to `responses`,
+  which is required for OpenAI scene compilation.
   `gpt-image-2.5-flare` is also accepted but wasn't used in the successful tests.
 - Unknown fields and invalid inputs are errors. The entire scene, including all
   referenced prompts and the optional opening PNG, is checked before spending.
@@ -106,7 +107,7 @@ MP4 is not proof that the movement looks good.
 ## Provider configuration
 
 Image settings accept an explicit `provider`, defaulting to `openai`, and a
-`provider_options` object. OpenAI is currently the available provider. For example:
+`provider_options` object. The available providers are `openai` and `gemini`. For example:
 
 ```json
 "settings": {
@@ -141,9 +142,77 @@ missing backend retains legacy Images behavior. Equivalent legacy/nested scene
 settings can resume the same build. Changing effective generation options needs
 a new project; retiming and explicit request-cap changes remain supported.
 
-## The continuity workflow
+## Gemini image generation
 
-New projects and all scene compiles use the setup that reproduced consistent
+Select `provider: "gemini"` in a scene or pass `--provider gemini` to `init`.
+The initial integration supports `gemini-3.1-flash-image`, which is also its
+default model. Gemini has no additional `provider_options` yet. OpenAI-only
+settings such as `quality`, `backend`, and `driver_model` are errors for Gemini;
+remove them when adapting an OpenAI scene.
+
+The [Gemini robot scene](examples/robot-wave/scene-gemini.json) reuses the existing
+opening and six edit prompts. Validate it without a key or network access:
+
+```sh
+uv run stop-motion compile --scene examples/robot-wave/scene-gemini.json --project projects/robot-gemini --dry-run
+```
+
+With `GEMINI_API_KEY` set (or present in your explicitly loaded `.env`), compile
+a checkpoint and inspect its PNGs before completing the sequence:
+
+```sh
+uv run --env-file .env stop-motion compile --scene examples/robot-wave/scene-gemini.json --project projects/robot-gemini --through 2
+uv run --env-file .env stop-motion compile --scene examples/robot-wave/scene-gemini.json --project projects/robot-gemini
+```
+
+The first command above makes two paid generation requests; completing the
+example makes five more. Imported openings cost no generation request. The
+request cap covers attempted submissions, including failures, and does not
+estimate dollars. Usage is saved when returned; missing usage remains unknown.
+No Google SDK is required: the adapter uses the Interactions HTTP interface.
+
+The opening is standalone. The first edit uploads the approved opening PNG in a
+fresh interaction; later edits continue the selected parent's saved
+`interaction_id`. Manual `frame --base` can branch from an earlier edit; selecting
+an opening starts a fresh edit chain. Extra `--reference` inputs are unsupported
+in this initial workflow. Image instructions and output settings are sent on
+every turn. The CLI does not replay failed/unknown attempts or automatically
+restart expired/rejected chains. Stored interactions must remain available in the
+same API project; Google documents the retention limits in its
+[Interactions guide](https://ai.google.dev/gemini-api/docs/interactions-overview#data_storage_and_retention).
+
+Supported 1K canvases are `1024x1024`, `848x1264`, `1264x848`, `896x1200`,
+`1200x896`, `928x1152`, `1152x928`, `768x1376`, `1376x768`, and `1584x672`.
+Doubling or quadrupling both dimensions selects the corresponding 2K or 4K size.
+These map explicitly to Google's documented aspect ratios and resolutions;
+arbitrary OpenAI sizes are not translated approximately. The compiler rejects a
+wrong-sized result before requesting another pose and keeps the PNG for inspection.
+See Google's [size table](https://ai.google.dev/gemini-api/docs/image-generation#aspect_ratios_and_image_size).
+
+The adapter requests JPEG output using the endpoint's default delivery mode
+and converts decoded pixels to PNG without resizing. An explicit delivery selector
+is omitted because the live endpoint rejects it. The adapter also accepts valid PNG
+responses. Only final model-output images are counted; intermediate thought images
+are excluded, and a missing or multiple final image result stops the build.
+Provider diagnostics retain the original MIME type and image hash, interaction ID,
+returned model, and usage. Credentials and inline image payloads are never saved
+in the manifest.
+
+An HTTP 429 response can indicate exhausted or unavailable quota. Check quota and
+[billing](https://ai.google.dev/gemini-api/docs/billing) for the Google API project
+that owns `GEMINI_API_KEY`; a zero request limit requires an account change before
+generation can proceed. Failed requests are recorded and never retried automatically.
+
+The integration is covered by mocked HTTP, real image decoding/video encoding,
+and fresh-process resume tests. A live seven-pose robot run also completed with
+checkpoint resume and video reuse. Visual inspection found stable character
+details and framing, but inaccurate arm angles and some texture drift. See the
+[validation notes](examples/robot-wave/gemini-validation.md); this single run
+does not establish general motion quality or character consistency.
+
+## The OpenAI continuity workflow
+
+OpenAI projects using Responses use the setup that reproduced consistent
 six-edit butterfly and robot sequences:
 
 1. Generate an opening in a standalone Responses call, or import a local PNG.
@@ -225,7 +294,7 @@ uv run stop-motion render --project projects/butterfly-new
 ```
 
 Use returned frame IDs rather than assuming them after a failed request.
-`frame --base` continues that selected edit's response chain; selecting an opening
+For OpenAI Responses, `frame --base` continues that selected edit's response chain; selecting an opening
 starts a new uploaded-PNG edit chain. Selecting an earlier edit creates a branch
 without including later rejected candidates. No `--base` means a new standalone
 opening. Extra `--reference` images are rejected for the Responses workflow.
@@ -235,7 +304,7 @@ opening. Extra `--reference` images are rejected for the Responses workflow.
 `timeline` accepts an array of `{"frame_id": "f0001", "hold": 3}` entries.
 `render` always creates a fresh export from the selected timeline.
 
-Existing manifests **without a backend field keep the legacy Images API**;
+Existing OpenAI manifests **without a backend field keep the legacy Images API**;
 they are not silently migrated. Explicit `init --backend images` preserves
 that experimental option, including `--reference` inputs. New `init` defaults
 to `responses` and accepts `--driver-model` plus the image/timing/budget flags.
@@ -265,7 +334,8 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-Tests use fake generators and mocked HTTP transport with the real OpenAI SDK.
+Tests use fake generators, mocked Gemini HTTP transport, and the real OpenAI SDK
+with mocked transport.
 Integration tests use real ffmpeg/ffprobe when installed. They verify request
 parity with the successful experiment, resumability, imported openings, request
 caps, failure recovery, and retiming without paid requests. No test calls the
