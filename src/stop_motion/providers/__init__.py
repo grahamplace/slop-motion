@@ -4,7 +4,10 @@ from importlib import import_module
 
 from ..storage import HarnessError
 
-_PROVIDERS = {"openai": "stop_motion.providers.openai"}
+_PROVIDERS = {
+    "openai": "stop_motion.providers.openai",
+    "gemini": "stop_motion.providers.gemini",
+}
 
 
 def get_provider(name: str):

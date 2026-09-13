@@ -92,6 +92,33 @@ that PNG upload alone caused the improvement: instructions changed with it.
 Production code does not import experimental scripts. A regression test compares
 all six serialized edit requests against the successful experiment's builder.
 
+## Gemini adapter
+
+`provider: gemini` selects `gemini-3.1-flash-image` through the Interactions HTTP
+interface. Configuration uses the same model/canvas/timing/request-cap fields,
+with empty provider_options. The adapter maps supported canvas sizes to explicit
+aspect_ratio/image_size pairs. Authentication comes only from GEMINI_API_KEY;
+HTTP clients are created only for generation, with no automatic retries or
+redirect following. Each attempt submits one synchronous POST.
+
+The workflow generates or imports an opening, uploads that PNG for a fresh first
+edit, and then continues the selected edit's interaction ID. It records
+workflow gemini.interactions.uploaded-opening.v1 and opaque continuation state
+containing interaction_id. Parent settings, workflow, and successful state must
+match. Expired or rejected references stop the chain without changing workflows.
+
+JPEG responses become PNGs with identical decoded pixels and dimensions; PNG
+responses retain their bytes. Only final model_output image blocks count toward
+the exactly-one-image contract. Intermediate thought images are ignored. Invalid
+results preserve diagnostic metadata and consume the attempt; wrong-sized PNGs
+remain inspectable but cannot advance compilation. Provider metadata records
+native image MIME/hash, returned model, interaction identity/status, and usage.
+
+The implementation is verified with mocked HTTP plus real image/video handling,
+including cross-process resume. Live Gemini continuity remains unverified.
+References: [image generation](https://ai.google.dev/gemini-api/docs/image-generation),
+[Interactions schema](https://ai.google.dev/static/api/interactions.openapi.json).
+
 ## Persistence and resume
 
 Authoring files and the build directory are separate. project.json is generated
@@ -139,9 +166,11 @@ produces a new export without image calls. Manual render always exports anew.
 
 Project schema remains version 1 with additive provider, hash, response, and
 compile fields. New settings use provider/model/size plus provider_options; old
-flat OpenAI options normalize to the same effective configuration on read. Old manifests without backend retain direct Images behavior.
+flat OpenAI options normalize to the same effective configuration on read. Old
+OpenAI manifests without backend retain direct Images behavior.
 New init defaults to Responses; explicit --backend images retains the old path.
-Compile only accepts the working Responses workflow and will not adopt unrelated
+Compile accepts the OpenAI Responses and Gemini Interactions workflows and will
+not adopt unrelated
 manual projects or experiment outputs.
 
 Tests cover the public compile interface with a real SDK plus mocked transport,
