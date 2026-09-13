@@ -88,6 +88,49 @@ def generator(handler):
     return GeminiImages(api_key="offline-gemini-key", transport=httpx.MockTransport(handler))
 
 
+def test_default_image_delivery_avoids_unsupported_selector(tmp_path):
+    calls = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        calls.append(payload)
+        if "delivery" in payload["response_format"]:
+            # Exact rejection observed from the live Interactions endpoint.
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Image delivery mode is not supported.",
+                        "code": "invalid_request",
+                    }
+                },
+            )
+        return httpx.Response(200, json=image_body())
+
+    project = Project.create(tmp_path / "build", "A robot", provider="gemini")
+    result = project.make_frame("Opening", generator=generator(respond))
+    assert result["id"] == "f0001" and result["request_count"] == 1
+    assert len(calls) == 1
+    assert "delivery" not in calls[0]["response_format"]
+
+
+def test_quota_rejection_reports_billing_without_suggesting_chain_restart(tmp_path):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(
+            429,
+            json={"error": {"code": "too_many_requests", "message": "Quota exceeded, limit: 0"}},
+        )
+
+    project = Project.create(tmp_path / "build", "A robot", provider="gemini")
+    with pytest.raises(ImageRequestError, match="quota and billing") as error:
+        project.make_frame("Opening", generator=generator(respond))
+    assert "expired" not in str(error.value)
+    assert len(calls) == 1 and project.status()["request_count"] == 1
+
+
 @pytest.mark.parametrize("mime", ["image/png", "image/jpeg"])
 def test_http_auth_final_image_extraction_and_png_normalization(mime):
     calls = []
@@ -141,7 +184,6 @@ def test_staged_compile_reopens_chain_and_reuses_video(scene, tmp_path, media):
         assert request["response_format"] == {
             "type": "image",
             "mime_type": "image/jpeg",
-            "delivery": "inline",
             "aspect_ratio": "1:1",
             "image_size": "1K",
         }

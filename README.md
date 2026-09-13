@@ -189,14 +189,19 @@ arbitrary OpenAI sizes are not translated approximately. The compiler rejects a
 wrong-sized result before requesting another pose and keeps the PNG for inspection.
 See Google's [size table](https://ai.google.dev/gemini-api/docs/image-generation#aspect_ratios_and_image_size).
 
-The adapter requests inline JPEG output, as specified by Google's
-[Interactions schema](https://ai.google.dev/static/api/interactions.openapi.json),
-and converts decoded pixels to PNG without resizing. It also accepts valid PNG
+The adapter requests JPEG output using the endpoint's default delivery mode
+and converts decoded pixels to PNG without resizing. An explicit delivery selector
+is omitted because the live endpoint rejects it. The adapter also accepts valid PNG
 responses. Only final model-output images are counted; intermediate thought images
 are excluded, and a missing or multiple final image result stops the build.
 Provider diagnostics retain the original MIME type and image hash, interaction ID,
 returned model, and usage. Credentials and inline image payloads are never saved
 in the manifest.
+
+An HTTP 429 response can indicate exhausted or unavailable quota. Check quota and
+[billing](https://ai.google.dev/gemini-api/docs/billing) for the Google API project
+that owns `GEMINI_API_KEY`; a zero request limit requires an account change before
+generation can proceed. Failed requests are recorded and never retried automatically.
 
 The integration is covered by mocked HTTP, real image decoding/video encoding,
 and fresh-process resume tests. The example is a continuity evaluation scene;

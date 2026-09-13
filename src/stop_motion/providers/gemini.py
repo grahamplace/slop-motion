@@ -114,7 +114,7 @@ def interaction_request(request: ImageRequest) -> dict:
             # The OpenAPI spec accepts JPEG output. Normalize decoded pixels to PNG locally.
             # https://ai.google.dev/static/api/interactions.openapi.json
             "mime_type": "image/jpeg",
-            "delivery": "inline",
+            # Leave delivery unspecified: the live endpoint rejects an explicit selector.
         },
     }
     if request.continuation:
@@ -166,10 +166,16 @@ class GeminiImages:
             "x-goog-request-id"
         )
         if not response.is_success:
+            hint = ""
+            if response.status_code == 429:
+                hint = " Check the API project's quota and billing."
+            elif request.continuation and response.status_code in {400, 404}:
+                hint = (
+                    " If the saved interaction expired or was rejected, use a new project;"
+                    " the edit chain was not restarted."
+                )
             raise ImageRequestError(
-                f"Gemini returned HTTP {response.status_code}. No automatic retry was made. "
-                "If a saved interaction expired or was rejected, use a new project; "
-                "the edit chain was not restarted.",
+                f"Gemini returned HTTP {response.status_code}. No automatic retry was made.{hint}",
                 unknown=response.status_code >= 500 or response.status_code == 408,
                 request_id=request_id,
                 metadata={"http_status": response.status_code},
