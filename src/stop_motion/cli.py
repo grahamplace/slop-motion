@@ -5,8 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .images import DEFAULT_DRIVER
-from .project import DEFAULT_MODEL, Project
+from .project import Project
 from .scene import compile_scene
 from .storage import HarnessError, read_json
 
@@ -17,13 +16,17 @@ def parser() -> argparse.ArgumentParser:
     init = commands.add_parser("init", help="Create a project in a new or empty directory.")
     init.add_argument("path", type=Path)
     init.add_argument("--brief-file", type=Path, required=True)
-    init.add_argument("--model", default=DEFAULT_MODEL)
+    init.add_argument("--provider", default="openai")
+    init.add_argument(
+        "--provider-options", type=Path, help="JSON file with provider-specific options."
+    )
+    init.add_argument("--model")
     init.add_argument("--size", default="1024x1024")
-    init.add_argument("--quality", default="medium")
+    init.add_argument("--quality", help="OpenAI quality (legacy alias).")
     init.add_argument("--fps", type=int, default=24)
     init.add_argument("--max-image-requests", type=int, default=20)
-    init.add_argument("--backend", choices=("responses", "images"), default="responses")
-    init.add_argument("--driver-model", default=DEFAULT_DRIVER)
+    init.add_argument("--backend", choices=("responses", "images"))
+    init.add_argument("--driver-model", help="OpenAI Responses driver (legacy alias).")
 
     compile_command = commands.add_parser("compile", help="Compile an editable scene to a video.")
     compile_command.add_argument("--scene", type=Path, required=True)
@@ -64,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:
             project = Project.create(
                 args.path,
                 args.brief_file.read_text(encoding="utf-8"),
+                provider=args.provider,
+                provider_options=(
+                    read_json(args.provider_options) if args.provider_options else None
+                ),
                 model=args.model,
                 size=args.size,
                 quality=args.quality,

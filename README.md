@@ -103,6 +103,39 @@ MP4 is not proof that the movement looks good.
   referenced prompts and the optional opening PNG, is checked before spending.
   The full scene must fit the explicit request cap, even for a staged compile.
 
+## Provider configuration
+
+Image settings accept an explicit `provider`, defaulting to `openai`, and a
+`provider_options` object. OpenAI is currently the available provider. For example:
+
+```json
+"settings": {
+  "provider": "openai",
+  "model": "gpt-image-2.5-sunburst",
+  "size": "1024x1024",
+  "provider_options": {
+    "backend": "responses",
+    "quality": "medium",
+    "driver_model": "gpt-5.5"
+  },
+  "fps": 24,
+  "max_image_requests": 7
+}
+```
+
+Existing top-level `backend`, `quality`, and `driver_model` settings remain
+accepted as OpenAI aliases. Conflicting nested and top-level values are errors.
+New project manifests and command results contain the resolved options under
+`provider_options`. Defaults are resolved only after choosing a provider.
+
+`init` accepts `--provider openai` and `--provider-options options.json` (a JSON
+object of provider options), alongside the existing OpenAI flags. Credentials
+remain environment-only; credential fields and unknown options are rejected.
+Reading an old project does not migrate it: missing provider means OpenAI, and
+missing backend retains legacy Images behavior. Equivalent legacy/nested scene
+settings can resume the same build. Changing effective generation options needs
+a new project; retiming and explicit request-cap changes remain supported.
+
 ## The continuity workflow
 
 New projects and all scene compiles use the setup that reproduced consistent
